@@ -181,6 +181,28 @@ self.processFileName = {self.processFileName}
 self.outputStatus = {self.outputStatus}
 """
 
+class ArchivedFile():
+    filePath: Path
+    compressed: bool
+    huffmanCompressed: bool
+    key: bytearray | None
+    dataStart: int
+    dataSize: int
+    pressDataSize: int
+    huffPressDataSize: int
+    
+    def __str__(self) -> str:
+        return f"""ArchivedFile(
+\tfilePath: {self.filePath}
+\tcompressed: {self.compressed}
+\thuffmanCompressed: {self.huffmanCompressed}
+\tkey: {self.key}
+\tdataStart: {self.dataStart}
+\tdataSize: {self.dataSize}
+\tpressDataSize: {self.pressDataSize}
+\thuffPressDataSize: {self.huffPressDataSize}
+)"""
+
 class DXArchive():
     MIN_COMPRESS = 4                        # Minimum number of compressed bytes
     MAX_SEARCHLISTNUM = 64                  # Maximum number of lists to traverse to find the maximum match length
@@ -190,7 +212,7 @@ class DXArchive():
     MAX_POSITION = 1 << 24                  # Maximum relative address that can be referenced ( 16MB )
 
     def __init__(self) -> None:
-        pass
+        self.archivedFiles = []
 
     def error(self) -> bool:
         if self.fp is not None:
@@ -198,15 +220,13 @@ class DXArchive():
 
         return False
 
-    def decodeArchive(self, archivePath: Path, outputPath: Path = Path('.'), only_game_dat: bool = False, keyString_: bytearray = None ):
+    def loadArchive(self, archivePath: Path, outputPath: Path = Path('.'), keyString_: bytearray = None ):
         self.fp = open( archivePath, mode="rb" )
         self.outputPath = outputPath
         self.directory = self.outputPath
-        self.only_game_dat = only_game_dat
         
         key = bytearray([0] * DXA_KEY_BYTES)
         keyString = bytearray([0] * (DXA_KEY_STRING_LENGTH + 1))
-        keyStringBuffer = bytearray([0] * DXA_KEY_STRING_MAXLENGTH)
         
         if keyString_ is None:
             keyString_ = defaultKeyString
@@ -220,31 +240,31 @@ class DXArchive():
         # 鍵の作成
         key = self.keyCreate( keyString, keyStringBytes, key )
 
-        head = DARC_HEAD(self.fp.read(len(DARC_HEAD()))) # 64
+        self.archiveHead = DARC_HEAD(self.fp.read(len(DARC_HEAD()))) # 64
 
-        if head.head != DXA_HEAD:
+        if self.archiveHead.head != DXA_HEAD:
             return self.error()
 
-        if head.version > DXA_VER or head.version < DXA_VER_MIN:
+        if self.archiveHead.version > DXA_VER or self.archiveHead.version < DXA_VER_MIN:
             return self.error()
 
-        headBuffer = [0] * head.headSize
+        headBuffer = [0] * self.archiveHead.headSize
         
 
-        noKey = ( head.flags & DXA_FLAG_NO_KEY ) != 0
+        self.noKey = ( self.archiveHead.flags & DXA_FLAG_NO_KEY ) != 0
 
-        if head.headSize is None or head.headSize == 0:
+        if self.archiveHead.headSize is None or self.archiveHead.headSize == 0:
             return self.error()
 
-        if ( head.flags & DXA_FLAG_NO_HEAD_PRESS ) != 0:
+        if ( self.archiveHead.flags & DXA_FLAG_NO_HEAD_PRESS ) != 0:
             # 圧縮されていない場合は普通に読み込む
-            self.fp.seek(head.fileNameTableStartAddress, SEEK_SET)
-            headBuffer = self.keyConvFileRead( head.headSize, 0 )
+            self.fp.seek(self.archiveHead.fileNameTableStartAddress, SEEK_SET)
+            headBuffer = self.keyConvFileRead( self.archiveHead.headSize, 0 )
         else:
             # 圧縮されたヘッダの容量を取得する
             self.fp.seek(0, SEEK_END)
             fileSize = self.fp.tell()
-            self.fp.seek(head.fileNameTableStartAddress, SEEK_SET)
+            self.fp.seek(self.archiveHead.fileNameTableStartAddress, SEEK_SET)
             huffHeadSize =  fileSize - self.fp.tell()
 
             if huffHeadSize is None or huffHeadSize <= 0:
@@ -253,7 +273,7 @@ class DXArchive():
             huffHeadBuffer = bytearray([0] * huffHeadSize)
 
             # ハフマン圧縮されたヘッダをメモリに読み込む
-            huffHeadBuffer = self.keyConvFileRead(huffHeadBuffer, huffHeadSize, self.fp, None if noKey else key, 0 )
+            huffHeadBuffer = self.keyConvFileRead(huffHeadBuffer, huffHeadSize, None if self.noKey else key, 0 )
 
             # ハフマン圧縮されたヘッダの解凍後の容量を取得する
             lzHeadSize = huffman_Decode( huffHeadBuffer, None )
@@ -269,11 +289,12 @@ class DXArchive():
             # LZ圧縮されたヘッダを解凍する
             (headBuffer, size) = self.decode( lzHeadBuffer, bytearray(headBuffer) )
             
-            nameP = headBuffer
-            fileP = nameP[head.fileTableStartAddress:]
-            dirP  = nameP[head.directoryTableStartAddress:]
-            self.directoryDecode(nameP, dirP, fileP, head, DARC_DIRECTORY(dirP), self.fp, key, keyString, keyStringBytes, noKey, keyStringBuffer)
-            self.fp.close()
+            self.nameTable = headBuffer[:self.archiveHead.fileTableStartAddress]
+            self.fileTable = headBuffer[self.archiveHead.fileTableStartAddress:self.archiveHead.directoryTableStartAddress]
+            self.directoryTable  = headBuffer[self.archiveHead.directoryTableStartAddress:]
+            
+            self.directoryDecode(DARC_DIRECTORY(self.directoryTable), key, keyString, keyStringBytes)
+            
             return True
     
     def keyCreate(self, source: bytearray, sourceBytes: int, key: bytearray ):
@@ -318,7 +339,7 @@ class DXArchive():
         
         return key
 
-    def CRC32(self, SrcData, SrcDataSize) -> int:
+    def CRC32(self, SrcData: bytearray, SrcDataSize: bytearray) -> int:
         CRC32TableInit = 0
         CRC32Table = []
         CRC = 0xffffffff
@@ -347,19 +368,18 @@ class DXArchive():
 
         return CRC ^ 0xffffffff ;
 
-    def keyConvFileRead(self, data, size, fp, key, position ) -> bytearray:
+    def keyConvFileRead(self, data: bytearray, size: int, key: bytearray, position: int ) -> bytearray:
         pos = 0
 
         if key is not None:
             # ファイルの位置を取得しておく
             if position == -1:
-                pos = fp.tell()
+                pos = self.fp.tell()
             else:
                 pos = position
-
-
+        
         # 読み込む
-        data = bytearray(fp.read(size)) # For assignment in keyConv data[i] ^= key[j]
+        data = bytearray(self.fp.read(size)) # For assignment in keyConv data[i] ^= key[j]
 
         if key is not None:
             # データを鍵文字列を使って Xor 演算
@@ -367,7 +387,7 @@ class DXArchive():
 
         return data
 
-    def keyConv(self, data, size, position, key) -> bytes:
+    def keyConv(self, data: bytearray, size: int, position: int, key: bytearray) -> bytes:
         if key is None:
             return data
 
@@ -473,201 +493,58 @@ class DXArchive():
 
         return (tda, destsize)
 
-    def directoryDecode(self, nameP, dirP, fileP, head: DARC_HEAD, _dir: DARC_DIRECTORY, arcP, key, keyString, keyStringBytes, noKey, keyStringBuffer) -> None:
+    def directoryDecode(self, directoryInfo: DARC_DIRECTORY, key: bytearray, keyString: str, keyStringBytes: int) -> None:
+        """
+        Recursively get all directory information from directoryTable:
+            Directory Name
+            Information about files inside directory (actual files and other directories)
+        """
+        
+        # Save current directory
         old_directory = self.directory
         
-        if _dir.directoryAddress != 0xffffffffffffffff and _dir.parentDirectoryAddress != 0xffffffffffffffff:
-            dirFile = DARC_FILEHEAD(fileP[_dir.directoryAddress:])
-            pName = self.getOriginalFileName(nameP[dirFile.nameAddress:])
+        if directoryInfo.directoryAddress != 0xffffffffffffffff and directoryInfo.parentDirectoryAddress != 0xffffffffffffffff:
+            dirFile = DARC_FILEHEAD(self.fileTable[directoryInfo.directoryAddress:])
+            pName = self.getOriginalFileName(self.nameTable[dirFile.nameAddress:])
             self.directory = self.directory / pName
-            self.directory.mkdir(parents=True, exist_ok=True)
         
-        lKey = bytearray([0] * DXA_KEY_BYTES)
-        fileHeadSize = len( DARC_FILEHEAD() )
-        file = DARC_FILEHEAD(fileP[_dir.fileHeadAddress:])
-        last_index = _dir.fileHeadAddress
-        for i in range(_dir.fileHeadNum):
-            if file.attributes & FILE_ATTRIBUTE_DIRECTORY:
-                # ディレクトリの場合は再帰をかける
-                self.directoryDecode( nameP, dirP, fileP, head, DARC_DIRECTORY(dirP[file.dataAddress:]), arcP, key, keyString, keyStringBytes, noKey, keyStringBuffer )
-                if self.only_game_dat:
-                    if "BasicData" not in str(self.directory):
-                        last_index += fileHeadSize
-                        file = DARC_FILEHEAD(fileP[last_index:])
-                        continue
+        
+        # Get info about file sinside this directory
+        for i in range(directoryInfo.fileHeadNum):
+            offset = len(DARC_FILEHEAD()) * i
+            fileInfo = DARC_FILEHEAD(self.fileTable[directoryInfo.fileHeadAddress+offset:])
+            
+            # Is the file another directory?
+            if fileInfo.attributes & FILE_ATTRIBUTE_DIRECTORY:
+                # Get that info too
+                self.directoryDecode( DARC_DIRECTORY(self.directoryTable[fileInfo.dataAddress:]), key, keyString, keyStringBytes )
             else:
-                # ファイルの場合は展開する
+                # It's an actual file
+                pName = self.getOriginalFileName(self.nameTable[fileInfo.nameAddress:])
+                filePath = self.directory / pName
                 
-                # バッファを確保する
-                buffer = bytearray([0] * DXA_BUFFERSIZE)
-                if buffer is None or len(buffer) == 0:
-                    return -1
-
-                # ファイルを開く
-                pName = self.getOriginalFileName(nameP[file.nameAddress:])
-                if self.only_game_dat:
-                    if str(pName) != "Game.dat":
-                        last_index += fileHeadSize
-                        file = DARC_FILEHEAD(fileP[last_index:])
-                        continue
-                if not self.directory.exists():
-                    self.directory.mkdir(parents=True)
-                destP = open(self.directory / pName, mode="wb")
+                archivedFile = ArchivedFile()
+                archivedFile.filePath = filePath
+                archivedFile.compressed = fileInfo.pressDataSize != 0xffffffffffffffff
+                archivedFile.huffmanCompressed = fileInfo.huffPressDataSize != 0xffffffffffffffff
+                archivedFile.key = None
+                archivedFile.dataStart = self.archiveHead.dataStartAddress + fileInfo.dataAddress
+                archivedFile.dataSize = fileInfo.dataSize
+                archivedFile.pressDataSize = fileInfo.pressDataSize
+                archivedFile.huffPressDataSize = fileInfo.huffPressDataSize
                 
                 # ファイル個別の鍵を作成
-                if not noKey:
-                    keyStringBuffer = self.createKeyFileString( int(head.charCodeFormat), keyString, keyStringBytes, _dir, file, fileP, dirP, nameP, keyStringBuffer )
+                if not self.noKey:
+                    keyStringBuffer = self.createKeyFileString( keyString, keyStringBytes, directoryInfo, fileInfo)
                     keyStringBufferBytes = len(keyStringBuffer)
-                    
-                    lKey = self.keyCreate( keyStringBuffer, keyStringBufferBytes, lKey )
+                    lKey = self.keyCreate( keyStringBuffer, keyStringBufferBytes, bytearray([0] * DXA_KEY_BYTES) )
+                    archivedFile.key = lKey
                 
-                # データがある場合のみ転送
-                if file.dataSize != 0:
-                    # 初期位置をセットする
-                    if arcP.tell() != head.dataStartAddress + file.dataAddress:
-                        arcP.seek(head.dataStartAddress + file.dataAddress, SEEK_SET)
-                        
-                    # データが圧縮されているかどうかで処理を分岐
-                    if file.pressDataSize != 0xffffffffffffffff:
-                        # 圧縮されている場合
-                        # ハフマン圧縮もされているかどうかで処理を分岐
-                        if file.huffPressDataSize != 0xffffffffffffffff:
-                            # 圧縮データが収まるメモリ領域の確保
-                            temp = bytearray([0] * (file.pressDataSize + file.huffPressDataSize + file.dataSize))
-                            
-                            # 圧縮データの読み込み
-                            read = self.keyConvFileRead( temp, file.huffPressDataSize, arcP, None if noKey else lKey, file.dataSize )
-                            temp[:len(read)] = read
-                            
-                            # ハフマン圧縮を解凍
-                            (decoded, _) = huffman_Decode( temp, temp[file.huffPressDataSize:])
-                            temp[file.huffPressDataSize:] = decoded
-
-                            # ファイルの前後をハフマン圧縮している場合は処理を分岐
-                            if head.huffmanEncodeKB != 0xff and file.pressDataSize > head.huffmanEncodeKB * 1024 * 2:
-                                # 解凍したデータの内、後ろ半分を移動する
-                                amount_to_move = head.huffmanEncodeKB * 1024
-                                start_dest = file.huffPressDataSize + file.pressDataSize - head.huffmanEncodeKB * 1024
-                                start_src = file.huffPressDataSize + head.huffmanEncodeKB * 1024
-                                moved_bytes = temp[start_src:start_src+amount_to_move]
-                                temp[start_dest:start_dest+amount_to_move] = moved_bytes
-
-                                # 残りのLZ圧縮データを読み込む
-                                data = self.keyConvFileRead(temp[file.huffPressDataSize + head.huffmanEncodeKB * 1024:],
-                                    file.pressDataSize - head.huffmanEncodeKB * 1024 * 2,
-                                    arcP, None if noKey else lKey, file.dataSize + file.huffPressDataSize )
-                                temp[file.huffPressDataSize + head.huffmanEncodeKB * 1024:len(data)] = data
-                        
-                            # 解凍
-                            
-                            (decoded, _) = self.decode(temp[file.huffPressDataSize:], temp[file.huffPressDataSize + file.pressDataSize:])
-                            temp[file.huffPressDataSize+file.pressDataSize:] = decoded
-                        
-                            # 書き出し
-                            destP.write(temp[file.huffPressDataSize + file.pressDataSize:file.huffPressDataSize + file.pressDataSize + file.dataSize])
-                        
-                        else:
-                            # 圧縮データが収まるメモリ領域の確保
-                            temp = bytearray([0] * (file.pressDataSize + file.dataSize))
-
-                            # 圧縮データの読み込み
-                            read = self.keyConvFileRead( temp, file.PressDataSize, arcP, None if noKey else lKey, file.dataSize )
-                            temp[:len(read)] = read
-                        
-                            # 解凍
-                            (decoded, _) = self.decode(temp, temp[file.pressDataSize:])
-                            temp[file.pressDataSize:] = decoded
-                        
-                            # 書き出し
-                            destP.write(temp[file.pressDataSize:file.pressDataSize + file.dataSize])
-                    else:
-                        # 圧縮されていない場合
-                    
-                        # ハフマン圧縮はされているかどうかで処理を分岐
-                        if file.huffPressDataSize != 0xffffffffffffffff:
-                            
-                            # 圧縮データが収まるメモリ領域の確保
-                            temp = bytearray([0] * (file.huffPressDataSize + file.dataSize))
-                            
-                            # 圧縮データの読み込み
-                            read = self.keyConvFileRead( temp, file.huffPressDataSize, arcP, None if noKey else lKey, file.dataSize )
-                            temp[:len(read)] = read
-                            
-                            # ハフマン圧縮を解凍
-                            (decoded, _) = huffman_Decode( temp, temp[file.huffPressDataSize:])
-                            temp[file.huffPressDataSize:] = decoded
-
-                            # ファイルの前後をハフマン圧縮している場合は処理を分岐
-                            if head.huffmanEncodeKB != 0xff and file.dataSize > head.huffmanEncodeKB * 1024 * 2:
-                                # 解凍したデータの内、後ろ半分を移動する
-                                amount_to_move = head.huffmanEncodeKB * 1024
-                                start_dest = file.huffPressDataSize + file.dataSize - head.huffmanEncodeKB * 1024
-                                start_src = file.huffPressDataSize + head.huffmanEncodeKB * 1024
-                                moved_bytes = temp[start_src:start_src+amount_to_move]
-                                temp[start_dest:start_dest+amount_to_move] = moved_bytes
-
-                                # 残りのLZ圧縮データを読み込む
-                                data = self.keyConvFileRead(temp[file.huffPressDataSize + head.huffmanEncodeKB * 1024:],
-                                    file.dataSize - head.huffmanEncodeKB * 1024 * 2,
-                                    arcP, None if noKey else lKey, file.dataSize + file.huffPressDataSize )
-                                temp[file.huffPressDataSize + head.huffmanEncodeKB * 1024:] = data
-                            
-                            # 書き出し
-                            destP.write(temp[file.huffPressDataSize:file.huffPressDataSize + file.dataSize])
-                        else:
-                            # 転送処理開始
-                            writeSize = 0
-                            while writeSize < file.dataSize:
-                                if file.dataSize - writeSize > DXA_BUFFERSIZE:
-                                    moveSize = DXA_BUFFERSIZE
-                                else:
-                                    moveSize = file.dataSize - writeSize
-
-                                # ファイルの反転読み込み
-                                read = self.keyConvFileRead( buffer, moveSize, arcP, None if noKey else lKey, file.dataSize + writeSize )
-                                buffer[:len(read)] = read
-
-                                # 書き出し
-                                destP.write(buffer[:moveSize])
-                                
-                                writeSize += moveSize
-                
-                # ファイルを閉じる
-                destP.close()
-                
-                """
-                # This is on the original .cpp file so I copied it too but I'm pretty sure the dates are wrongly parsed
-                # ファイルのタイムスタンプを設定する
-                import win32file, pywintypes
-                
-                pName = self.getOriginalFileName(nameP[file.nameAddress:])
-                
-                hFile = win32file.CreateFileW(str(self.directory / pName),
-                                    win32file.GENERIC_WRITE, 0, None,
-                                    win32file.OPEN_EXISTING, win32file.FILE_ATTRIBUTE_NORMAL, None )
-
-                if hFile == win32file.INVALID_HANDLE_VALUE:
-                    hFile = hFile # ¯\_(ツ)_/¯
-                
-                createTime = pywintypes.Time(file.time.create >> 32)
-                lastAccessTime = pywintypes.Time(file.time.lastAccess >> 32)
-                lastWriteTime = pywintypes.Time(file.time.lastWrite >> 32)
-                
-                win32file.SetFileTime( hFile, createTime, lastAccessTime, lastWriteTime )
-                
-                win32file.CloseHandle(hFile)
-
-                # ファイル属性を付ける
-                win32file.SetFileAttributesW(str(self.directory / pName), file.attributes)
-                """
+                self.archivedFiles.append(archivedFile)
             
-            if i == _dir.fileHeadNum-1:
+            if i == directoryInfo.fileHeadNum-1:
                 break
-            else:
-                last_index += fileHeadSize
-                file = DARC_FILEHEAD(fileP[last_index:])
-                if self.only_game_dat:
-                    return
+            
         # Like going one directory up ../
         self.directory = old_directory 
     
@@ -679,8 +556,13 @@ class DXArchive():
             return Path(pName.decode("utf8"))
         except UnicodeDecodeError:
             return Path(pName.decode("cp932")) # For Japanese characters
-        
-    def createKeyFileString(self, charCodeFormat, keyString, keyStringBytes, directory: DARC_DIRECTORY, fileHead: DARC_FILEHEAD, fileTable, directoryTable, nameTable, fileString) -> bytearray:
+    
+    def createKeyFileString(self, keyString, keyStringBytes, directory: DARC_DIRECTORY, fileHead: DARC_FILEHEAD) -> bytearray:
+        # At the end of the day this create a key that is comprised of
+        # keyString + FILENAME + PARENT DIRECTORY [ + PARENT PARENT DIRECTORY ]
+        # So the key for ./test1/test2/test3/file.txt
+        # would be keyStringFILE.TXTTEST3TEST2TEST1
+        fileString = bytearray([0] * DXA_KEY_STRING_MAXLENGTH)
         # 最初にパスワードの文字列をセット
         if keyString is not None and keyStringBytes != 0:
             fileString[:keyStringBytes] = keyString[:keyStringBytes]
@@ -694,37 +576,118 @@ class DXArchive():
         
         fileString[ DXA_KEY_STRING_MAXLENGTH - 8: DXA_KEY_STRING_MAXLENGTH ] = bytearray(b'00000000')
         
-        # 次にファイル名の文字列をセット
-        
-        src = nameTable[fileHead.nameAddress + 4:]
+        src = self.nameTable[fileHead.nameAddress + 4:]
         amount = ( DXA_KEY_STRING_MAXLENGTH - 8 ) - og_startAddr
         end_string = min(src.find(0x0),amount-1)
         copied = src[:end_string]
         fileString[startAddr:startAddr+len(copied)] = copied
         startAddr = startAddr+len(copied)
         
-        # その後にディレクトリの文字列をセット
-        
         if directory.parentDirectoryAddress != 0xffffffffffffffff:
             while True:
-                fileHead = DARC_FILEHEAD(fileTable[directory.directoryAddress:])
-                src = nameTable[fileHead.nameAddress + 4:]
+                fileHead = DARC_FILEHEAD(self.fileTable[directory.directoryAddress:])
+                src = self.nameTable[fileHead.nameAddress + 4:]
                 amount = ( DXA_KEY_STRING_MAXLENGTH - 8 ) - og_startAddr
                 end_string = min(src.find(0x0),amount-1)
                 copied = src[:end_string]
                 fileString[startAddr:startAddr+len(copied)] = copied
                 startAddr = startAddr+len(copied)
-                directory = DARC_DIRECTORY(directoryTable[directory.parentDirectoryAddress:])
+                directory = DARC_DIRECTORY(self.directoryTable[directory.parentDirectoryAddress:])
                 if directory.parentDirectoryAddress == 0xffffffffffffffff:
                     break
         
         new_key = fileString[:startAddr]
         return new_key
         
+    def extractAll(self) -> None:
+        for archivedFile in self.archivedFiles:
+            self.extractFile(archivedFile)
+    
+    def extractFile(self, archivedFile: ArchivedFile) -> None:
+        if not archivedFile.filePath.parent.exists():
+            archivedFile.filePath.parent.mkdir(parents=True)
+        
+        destP = open(archivedFile.filePath, mode="wb")
+                
+        if archivedFile.dataSize != 0:
+            outputSize = archivedFile.dataSize
+            
+            if self.fp.tell() != archivedFile.dataStart:
+                self.fp.seek(archivedFile.dataStart, SEEK_SET)
+                
+            if archivedFile.compressed:
+                outputSize += archivedFile.pressDataSize
+            
+            if archivedFile.huffmanCompressed:
+                outputSize += archivedFile.huffPressDataSize
+            
+            output = bytearray([0] * (outputSize))
+            
+            # If there's huffman compression
+            if archivedFile.huffmanCompressed:
+                keyConvFileReadSize = archivedFile.pressDataSize if archivedFile.compressed else archivedFile.dataSize
+                
+                read = self.keyConvFileRead( output, archivedFile.huffPressDataSize, archivedFile.key, archivedFile.dataSize )
+                output[:len(read)] = read
+                    
+                (decoded, _) = huffman_Decode( output, output[archivedFile.huffPressDataSize:])
+                output[archivedFile.huffPressDataSize:] = decoded
+
+                if self.archiveHead.huffmanEncodeKB != 0xff and keyConvFileReadSize > self.archiveHead.huffmanEncodeKB * 1024 * 2:
+                    amount_to_move = self.archiveHead.huffmanEncodeKB * 1024
+                    start_dest = archivedFile.huffPressDataSize + keyConvFileReadSize - self.archiveHead.huffmanEncodeKB * 1024
+                    start_src = archivedFile.huffPressDataSize + self.archiveHead.huffmanEncodeKB * 1024
+                    moved_bytes = output[start_src:start_src+amount_to_move]
+                    output[start_dest:start_dest+amount_to_move] = moved_bytes
+                    
+                    data = self.keyConvFileRead(output[archivedFile.huffPressDataSize + self.archiveHead.huffmanEncodeKB * 1024:],
+                        keyConvFileReadSize - self.archiveHead.huffmanEncodeKB * 1024 * 2,
+                        archivedFile.key, archivedFile.dataSize + archivedFile.huffPressDataSize )
+                    output[archivedFile.huffPressDataSize + self.archiveHead.huffmanEncodeKB * 1024:len(data)] = data
+                
+                if archivedFile.compressed:
+                    (decoded, _) = self.decode(output[archivedFile.huffPressDataSize:], output[archivedFile.huffPressDataSize + archivedFile.pressDataSize:])
+                    
+                    output[archivedFile.huffPressDataSize+archivedFile.pressDataSize:] = decoded
+                    destP.write(output[archivedFile.huffPressDataSize + archivedFile.pressDataSize:archivedFile.huffPressDataSize + archivedFile.pressDataSize + archivedFile.dataSize])
+                else:
+                    destP.write(output[archivedFile.huffPressDataSize:archivedFile.huffPressDataSize + archivedFile.dataSize])
+                
+            else:
+                # There's no huffman compression, check for regular compression
+                if archivedFile.compressed:
+                    read = self.keyConvFileRead( output, archivedFile.pressDataSize, archivedFile.key, archivedFile.dataSize )
+                    output[:len(read)] = read
+                
+                    (decoded, _) = self.decode(output, output[archivedFile.pressDataSize:])
+                    output[archivedFile.pressDataSize:] = decoded
+                
+                    destP.write(output[archivedFile.pressDataSize:archivedFile.pressDataSize + archivedFile.dataSize])
+                else:
+                    writeSize = 0
+                    while writeSize < archivedFile.dataSize:
+                        if archivedFile.dataSize - writeSize > DXA_BUFFERSIZE:
+                            moveSize = DXA_BUFFERSIZE
+                        else:
+                            moveSize = archivedFile.dataSize - writeSize
+                        
+                        read = self.keyConvFileRead( output, moveSize, archivedFile.key, archivedFile.dataSize + writeSize )
+                        output[:len(read)] = read
+
+                        destP.write(output[:moveSize])
+                        
+                        writeSize += moveSize
+        
+        destP.close()
+
+    def __enter__(self):
+        return self
+       
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        if not self.fp.closed:
+            self.fp.close()
 
 def main() -> None:
-    decompiler = DXArchive()
-    
     # DXArchive V8
     archivePath_v8 = Path("./test_wolf/version_2255.wolf")
     archivePath_v8 = Path("./test_wolf/version_2264.wolf")
@@ -738,15 +701,12 @@ def main() -> None:
     archivePath = archivePath_v8
     keyString_ = key_2_25_2_81
     outputPath = Path("output")
-    only_game_dat = True
     
-    
-    decompiled = decompiler.decodeArchive( archivePath=archivePath, outputPath=outputPath , only_game_dat=only_game_dat, keyString_=keyString_ )
-    
-    if decompiled:
-        print(f"Decompiled {archivePath.name}")
-    else:
-        print(f"Couldn't decompile {archivePath.name}")
+    with DXArchive() as decompiler:
+        if decompiler.loadArchive( archivePath=archivePath, outputPath=outputPath, keyString_=keyString_ ):
+            for archivedFile in decompiler.archivedFiles:
+                if archivedFile.filePath.name == 'Game.dat' or archivedFile.filePath.suffix in ['.png', '.jpg', '.ogg', '.mp3']:
+                    decompiler.extractFile(archivedFile)
 
 
 if __name__ == '__main__':
