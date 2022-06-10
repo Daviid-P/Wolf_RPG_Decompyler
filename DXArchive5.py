@@ -5,30 +5,33 @@ import struct
 import array
 
 
-DXA_HEAD = struct.unpack("H",b"DX")[0]     # Header
-DXA_VER = 0x0005                        # Version
-DXA_BUFFERSIZE = 0x1000000              # Size of the buffer used when creating the archive
-DXA_KEY_STRING_LENGTH = 12              # Length of key string
+DXA_HEAD = struct.unpack("H", b"DX")[0]  # Header
+DXA_VER = 0x0005  # Version
+DXA_BUFFERSIZE = 0x1000000  # Size of the buffer used when creating the archive
+DXA_KEY_STRING_LENGTH = 12  # Length of key string
 
 # Default key string
-defaultKeyString = bytearray([0x44, 0x58, 0x42, 0x44, 0x58, 0x41, 0x52, 0x43, 0x00]) # "DXLIBARC"
+defaultKeyString = bytearray(
+    [0x44, 0x58, 0x42, 0x44, 0x58, 0x41, 0x52, 0x43, 0x00]
+)  # "DXLIBARC"
 
 # Length of the log string
 logStringLength = 0
 
-class DARC_HEAD():
-    head = None                            # Header
-    version = None                         # Version
-    headSize = None                        # Total size of the file without the DARC_HEAD header information.
-    dataStartAddress = None                # The data address where the data of the first file is stored (the first address of the file is assumed to be address 0)
-    fileNameTableStartAddress = None       # The first address of the file name table (the first address of the file is assumed to be address 0)
-    fileTableStartAddress = None           # First address of the file table (assumes the address of the member variable FileNameTableStartAddress to be 0)
-    directoryTableStartAddress = None      # First address of the directory table (assumes the address of the member variable FileNameTableStartAddress to be 0)
-                                    # The DARC_DIRECTORY structure located at address 0 is the root directory.
-    charCodeFormat = None                  # Code page number used for the file name
-    flags = None                           # Flags (DXA_FLAG_NO_KEY, etc.)
-    huffmanEncodeKB = None                 # Size to be compressed by Huffman before and after the file (unit: kilobytes If 0xff, all files are compressed)
-    reserve = None                         # Reserved area
+
+class DARC_HEAD:
+    head = None  # Header
+    version = None  # Version
+    headSize = None  # Total size of the file without the DARC_HEAD header information.
+    dataStartAddress = None  # The data address where the data of the first file is stored (the first address of the file is assumed to be address 0)
+    fileNameTableStartAddress = None  # The first address of the file name table (the first address of the file is assumed to be address 0)
+    fileTableStartAddress = None  # First address of the file table (assumes the address of the member variable FileNameTableStartAddress to be 0)
+    directoryTableStartAddress = None  # First address of the directory table (assumes the address of the member variable FileNameTableStartAddress to be 0)
+    # The DARC_DIRECTORY structure located at address 0 is the root directory.
+    charCodeFormat = None  # Code page number used for the file name
+    flags = None  # Flags (DXA_FLAG_NO_KEY, etc.)
+    huffmanEncodeKB = None  # Size to be compressed by Huffman before and after the file (unit: kilobytes If 0xff, all files are compressed)
+    reserve = None  # Reserved area
 
     def __init__(self, header_bytes=None):
         if header_bytes is None:
@@ -42,7 +45,7 @@ class DARC_HEAD():
         self.fileTableStartAddress = unpacked[5]
         self.directoryTableStartAddress = unpacked[6]
         self.charCodeFormat = unpacked[7]
-    
+
     def __len__(self) -> int:
         return struct.calcsize("HHIIIIII")
 
@@ -58,47 +61,49 @@ Head->directoryTableStartAddress = {self.directoryTableStartAddress}
 Head->charCodeFormat = {self.charCodeFormat}
 """
 
+
 # Time information of the file
-class DARC_FILETIME():
-    create = None            # Creation time
-    lastAccess = None        # Last access time
-    lastWrite = None         # Last update time
-    
+class DARC_FILETIME:
+    create = None  # Creation time
+    lastAccess = None  # Last access time
+    lastWrite = None  # Last update time
+
     def __init__(self, fileTime_bytes=None):
         if fileTime_bytes is None:
             return
-        unpacked = struct.unpack("QQQ", fileTime_bytes[:len(self)])
+        unpacked = struct.unpack("QQQ", fileTime_bytes[: len(self)])
         self.create = unpacked[0]
         self.lastAccess = unpacked[1]
         self.lastWrite = unpacked[2]
-    
+
     def __len__(self) -> int:
         return struct.calcsize("QQQ")
-    
+
     def __repr__(self) -> str:
         return f"""\tTime->create = {self.create}
 \tTime->lastAccess = {self.lastAccess}
 \tTime->lastWrite = {self.lastWrite}"""
 
+
 # File storage information
-class DARC_FILEHEAD():
-    nameAddress = None           # Address where the file name is stored (the address of the member variable FileNameTableStartAddress of the ARCHIVE_HEAD structure is set to address 0)
-    attributes = None            # File attributes
-    time = None                  # Time information
-    dataAddress = None           # Address where the file is stored.
-                          #            In the case of a file, the address indicated by the member variable DataStartAddress of the DARC_HEAD structure shall be address 0.
-                          #            In the case of a directory: The address indicated by the member variable "DirectoryTableStartAddress" of the DARC_HEAD structure shall be set to address 0.
-    dataSize = None              # Data size of the file
-    pressDataSize = None         # The size of the data after compression ( 0xffffffffffffffffff: not compressed ) (added in Ver0x0002)
-    
+class DARC_FILEHEAD:
+    nameAddress = None  # Address where the file name is stored (the address of the member variable FileNameTableStartAddress of the ARCHIVE_HEAD structure is set to address 0)
+    attributes = None  # File attributes
+    time = None  # Time information
+    dataAddress = None  # Address where the file is stored.
+    #            In the case of a file, the address indicated by the member variable DataStartAddress of the DARC_HEAD structure shall be address 0.
+    #            In the case of a directory: The address indicated by the member variable "DirectoryTableStartAddress" of the DARC_HEAD structure shall be set to address 0.
+    dataSize = None  # Data size of the file
+    pressDataSize = None  # The size of the data after compression ( 0xffffffffffffffffff: not compressed ) (added in Ver0x0002)
+
     def __init__(self, fileHead_bytes=None, version=5):
         self.version = version
         if fileHead_bytes is None:
             return
         if self.version > 2:
-            unpacked =  struct.unpack("IIQQQIII", fileHead_bytes[:len(self)])
+            unpacked = struct.unpack("IIQQQIII", fileHead_bytes[: len(self)])
         else:
-            unpacked =  struct.unpack("IIQQQII", fileHead_bytes[:len(self)])
+            unpacked = struct.unpack("IIQQQII", fileHead_bytes[: len(self)])
         self.nameAddress = unpacked[0]
         self.attributes = unpacked[1]
         self.time = DARC_FILETIME()
@@ -109,39 +114,45 @@ class DARC_FILEHEAD():
         self.dataSize = unpacked[6]
         if self.version == 5:
             self.pressDataSize = unpacked[7]
-    
+
     def __len__(self) -> int:
         if self.version > 2:
             return struct.calcsize("IIQQQIII")
         else:
             return struct.calcsize("IIQQQII")
-    
+
     def __repr__(self) -> str:
-        return f"""File->nameAddress = {self.nameAddress}
+        return (
+            f"""File->nameAddress = {self.nameAddress}
 File->attributes = {self.attributes}
 File->time.create = {self.time.create}
 File->time.lastAccess = {self.time.lastAccess}
 File->time.lastWrite = {self.time.lastWrite}
 File->dataAddress = {self.dataAddress}
 File->dataSize = {self.dataSize}
-""" + f"File->pressDataSize = {self.pressDataSize}" if self.version == 5 else ""
+"""
+            + f"File->pressDataSize = {self.pressDataSize}"
+            if self.version == 5
+            else ""
+        )
+
 
 # Directory storage information
-class DARC_DIRECTORY():
-    directoryAddress = None           # Address where my DARC_FILEHEAD is stored (Address 0 is the address indicated by the member variable FileTableStartAddress of the DARC_HEAD structure)
-    parentDirectoryAddress = None     # The address where DARC_DIRECTORY of the parent directory is stored ( The address indicated by the member variable DirectoryTableStartAddress of the DARC_HEAD structure is set to address 0.)
-    fileHeadNum = None                # Number of files in the directory
-    fileHeadAddress = None            # The address where the header column of the file in the directory is stored ( The address indicated by the member variable FileTableStartAddress of the DARC_HEAD structure is set to address 0.)
-    
+class DARC_DIRECTORY:
+    directoryAddress = None  # Address where my DARC_FILEHEAD is stored (Address 0 is the address indicated by the member variable FileTableStartAddress of the DARC_HEAD structure)
+    parentDirectoryAddress = None  # The address where DARC_DIRECTORY of the parent directory is stored ( The address indicated by the member variable DirectoryTableStartAddress of the DARC_HEAD structure is set to address 0.)
+    fileHeadNum = None  # Number of files in the directory
+    fileHeadAddress = None  # The address where the header column of the file in the directory is stored ( The address indicated by the member variable FileTableStartAddress of the DARC_HEAD structure is set to address 0.)
+
     def __init__(self, directory_bytes=None):
         if directory_bytes is None:
             return
-        unpacked = struct.unpack("IIII", directory_bytes[:len(self)])
+        unpacked = struct.unpack("IIII", directory_bytes[: len(self)])
         self.directoryAddress = unpacked[0]
         self.parentDirectoryAddress = unpacked[1]
         self.fileHeadNum = unpacked[2]
         self.fileHeadAddress = unpacked[3]
-    
+
     def __len__(self) -> int:
         return struct.calcsize("IIII")
 
@@ -153,13 +164,14 @@ self.fileHeadNum = {self.fileHeadNum}
 self.fileHeadAddress = {self.fileHeadAddress}
 """
 
+
 # Information for storing the progress of the encoding process
-class DARC_ENCODEINFO():
-    totalFileNum = None              # Total number of files
-    compFileNum = None               # Number of files processed.
-    prevDispTime = None              # Time of the last status output
-    processFileName = None           # Name of the file currently being processed
-    outputStatus = None              # Whether status output is performed or not
+class DARC_ENCODEINFO:
+    totalFileNum = None  # Total number of files
+    compFileNum = None  # Number of files processed.
+    prevDispTime = None  # Time of the last status output
+    processFileName = None  # Name of the file currently being processed
+    outputStatus = None  # Whether status output is performed or not
 
     def __repr__(self) -> str:
         return f"""
@@ -170,16 +182,21 @@ self.processFileName = {self.processFileName}
 self.outputStatus = {self.outputStatus}
 """
 
-class DXArchive():
-    MIN_COMPRESS = 4                        # Minimum number of compressed bytes
-    MAX_SEARCHLISTNUM = 64                  # Maximum number of lists to traverse to find the maximum match length
-    MAX_SUBLISTNUM = 65536                  # Maximum number of sublists to reduce compression time
-    MAX_COPYSIZE = 0x1fff + MIN_COMPRESS    # Maximum size to copy from a reference address ( Maximum copy size that a compression code can represent + Minimum number of compressed bytes )
-    MAX_ADDRESSLISTNUM = 1024 * 1024 * 1    # Maximum size of slide dictionary
-    MAX_POSITION = 1 << 24                  # Maximum relative address that can be referenced ( 16MB )
+
+class DXArchive:
+    MIN_COMPRESS = 4  # Minimum number of compressed bytes
+    MAX_SEARCHLISTNUM = (
+        64  # Maximum number of lists to traverse to find the maximum match length
+    )
+    MAX_SUBLISTNUM = 65536  # Maximum number of sublists to reduce compression time
+    MAX_COPYSIZE = (
+        0x1FFF + MIN_COMPRESS
+    )  # Maximum size to copy from a reference address ( Maximum copy size that a compression code can represent + Minimum number of compressed bytes )
+    MAX_ADDRESSLISTNUM = 1024 * 1024 * 1  # Maximum size of slide dictionary
+    MAX_POSITION = 1 << 24  # Maximum relative address that can be referenced ( 16MB )
 
     def __init__(self) -> None:
-            pass
+        pass
 
     def error(self) -> bool:
         if self.fp is not None:
@@ -187,17 +204,23 @@ class DXArchive():
 
         return False
 
-    def decodeArchive(self, archivePath: Path, outputPath: Path = Path('.'), only_game_dat: bool = False, keyString_: bytearray = None ):
-        self.fp = open( archivePath, mode="rb" )
+    def decodeArchive(
+        self,
+        archivePath: Path,
+        outputPath: Path = Path("."),
+        only_game_dat: bool = False,
+        keyString_: bytearray = None,
+    ):
+        self.fp = open(archivePath, mode="rb")
         self.outputPath = outputPath
         self.directory = self.outputPath
         self.only_game_dat = only_game_dat
-        
+
         key = bytearray([0] * DXA_KEY_STRING_LENGTH)
 
         # 鍵の作成
-        key = self.keyCreate( keyString_, key )
-        
+        key = self.keyCreate(keyString_, key)
+
         head = self.keyConvFileRead(None, len(DARC_HEAD()), self.fp, key, 0)
 
         head = DARC_HEAD(head)
@@ -205,7 +228,9 @@ class DXArchive():
         if head.head != DXA_HEAD:
             # Check for version 2 or earlier.
             key = bytearray([255] * DXA_KEY_STRING_LENGTH)
-            head = DARC_HEAD(self.keyConvFileRead(head, len(DARC_HEAD()), self.fp, key, 0))
+            head = DARC_HEAD(
+                self.keyConvFileRead(head, len(DARC_HEAD()), self.fp, key, 0)
+            )
             if head.head != DXA_HEAD:
                 return self.error()
 
@@ -216,50 +241,59 @@ class DXArchive():
 
         if head.headSize is None or head.headSize == 0:
             return self.error()
-        
+
         self.fp.seek(head.fileNameTableStartAddress, SEEK_SET)
-        
+
         # Unnecessary as it's been checked on L230 / It's on DXArchiveVer5.cpp so whatever
         if head.version >= DXA_VER:
-            headBuffer = self.keyConvFileRead(headBuffer, head.headSize, self.fp, key, 0 )
+            headBuffer = self.keyConvFileRead(
+                headBuffer, head.headSize, self.fp, key, 0
+            )
         else:
             headBuffer = self.keyConvFileRead(headBuffer, head.headSize, self.fp, key)
-            
-        
+
         nameP = headBuffer
-        fileP = nameP[head.fileTableStartAddress:]
-        dirP  = nameP[head.directoryTableStartAddress:]
-        self.directoryDecode(nameP, dirP, fileP, head, DARC_DIRECTORY(dirP), self.fp, key)
+        fileP = nameP[head.fileTableStartAddress :]
+        dirP = nameP[head.directoryTableStartAddress :]
+        self.directoryDecode(
+            nameP, dirP, fileP, head, DARC_DIRECTORY(dirP), self.fp, key
+        )
         self.fp.close()
         return True
-    
-    def keyCreate(self, source: bytearray, key: bytearray ):
+
+    def keyCreate(self, source: bytearray, key: bytearray):
         key_length = len(key)
-        
+
         if source is None:
             for i in range(key_length):
-                key[i] = 0xaaaaaaaa%256
+                key[i] = 0xAAAAAAAA % 256
         else:
-            tmp = source * max(1, DXA_KEY_STRING_LENGTH%key_length)
+            tmp = source * max(1, DXA_KEY_STRING_LENGTH % key_length)
             key = tmp[:DXA_KEY_STRING_LENGTH]
-                
-        
-        key[0] = (~key[0])%256
-        key[1] = (( key[1] >> 4 ) | ( key[1] << 4 ))%256
-        key[2] = (key[2] ^ 0x8a)%256
-        key[3] = (~( ( key[3] >> 4 ) | ( key[3] << 4 ) ))%256
-        key[4] = (~key[4])%256
-        key[5] = (key[5] ^ 0xac)%256
-        key[6] = (~key[6])%256
-        key[7] = (~( ( key[7] >> 3 ) | ( key[7] << 5 ) ))%256
-        key[8] = (( key[8] >> 5 ) | ( key[8] << 3 ))%256
-        key[9] = (key[9] ^ 0x7f)%256
-        key[10] = (( ( key[10] >> 4 ) | ( key[10] << 4 ) ) ^ 0xd6)%256
-        key[11] = (key[11] ^ 0xcc)%256
-        
+
+        key[0] = (~key[0]) % 256
+        key[1] = ((key[1] >> 4) | (key[1] << 4)) % 256
+        key[2] = (key[2] ^ 0x8A) % 256
+        key[3] = (~((key[3] >> 4) | (key[3] << 4))) % 256
+        key[4] = (~key[4]) % 256
+        key[5] = (key[5] ^ 0xAC) % 256
+        key[6] = (~key[6]) % 256
+        key[7] = (~((key[7] >> 3) | (key[7] << 5))) % 256
+        key[8] = ((key[8] >> 5) | (key[8] << 3)) % 256
+        key[9] = (key[9] ^ 0x7F) % 256
+        key[10] = (((key[10] >> 4) | (key[10] << 4)) ^ 0xD6) % 256
+        key[11] = (key[11] ^ 0xCC) % 256
+
         return key
 
-    def keyConvFileRead(self, data: bytearray, size: int, fp: TextIOWrapper, key: bytearray, position: int = -1 ) -> bytearray:
+    def keyConvFileRead(
+        self,
+        data: bytearray,
+        size: int,
+        fp: TextIOWrapper,
+        key: bytearray,
+        position: int = -1,
+    ) -> bytearray:
         pos = 0
 
         # ファイルの位置を取得しておく
@@ -268,17 +302,17 @@ class DXArchive():
         else:
             pos = position
 
-
         # 読み込む
-        data = bytearray(fp.read(size)) # For assignment in keyConv data[i] ^= key[j]
+        data = bytearray(fp.read(size))  # For assignment in keyConv data[i] ^= key[j]
 
-        data = self.keyConv( data, size, pos, key)
+        data = self.keyConv(data, size, pos, key)
 
         return data
 
-    def keyConv(self, data: bytearray, size: int, position: int, key: bytearray) -> bytearray:
+    def keyConv(
+        self, data: bytearray, size: int, position: int, key: bytearray
+    ) -> bytearray:
         position %= DXA_KEY_STRING_LENGTH
-
 
         j = position
         for i in range(size):
@@ -290,32 +324,32 @@ class DXArchive():
         return data
 
     def decode(self, src, dest) -> tuple:
-        srcp  = src
-        
+        srcp = src
+
         destsize = struct.unpack("I", srcp[0:4])[0]
         srcsize = struct.unpack("I", srcp[4:8])[0] - 9
-        
+
         keycode = srcp[8]
-        
+
         if dest is None:
             return destsize
-        
-        sp  = srcp[9:]
-        
+
+        sp = srcp[9:]
+
         tda = bytearray([0] * destsize)
         tdac = 0
 
         while srcsize > 0:
             if sp[0] != keycode:
                 tda[tdac] = sp[0]
-                tdac +=1
+                tdac += 1
                 sp = sp[1:]
                 srcsize -= 1
                 continue
 
             if sp[1] == keycode:
-                tda[tdac] = keycode%256
-                tdac +=1
+                tda[tdac] = keycode % 256
+                tdac += 1
                 sp = sp[2:]
                 srcsize -= 2
                 continue
@@ -328,12 +362,11 @@ class DXArchive():
             sp = sp[2:]
             srcsize -= 2
 
-
             conbo = code >> 3
-            if code & ( 0x1 << 2 ):
+            if code & (0x1 << 2):
                 conbo |= sp[0] << 5
                 sp = sp[1:]
-                srcsize -=1
+                srcsize -= 1
 
             conbo += self.MIN_COMPRESS
 
@@ -343,51 +376,64 @@ class DXArchive():
                 sp = sp[1:]
                 srcsize -= 1
             elif indexsize == 1:
-                index = struct.unpack('H', sp[0:2])[0]
+                index = struct.unpack("H", sp[0:2])[0]
                 sp = sp[2:]
-                srcsize -= 2 ;
+                srcsize -= 2
             elif indexsize == 2:
-                index = struct.unpack('H', sp[0:2])[0] | (sp[2] << 16 )
+                index = struct.unpack("H", sp[0:2])[0] | (sp[2] << 16)
                 sp = sp[3:]
                 srcsize -= 3
 
             index += 1
 
             if index < conbo:
-                num  = index
+                num = index
                 while conbo > num:
-                    copied_bytes = tda[tdac-num:tdac-num+num]
-                    tda[tdac:tdac+num] = copied_bytes
+                    copied_bytes = tda[tdac - num : tdac - num + num]
+                    tda[tdac : tdac + num] = copied_bytes
                     tdac += num
                     conbo -= num
-                    num   += num
+                    num += num
                 if conbo != 0:
-                    copied_bytes = tda[tdac-num:tdac-num+conbo]
-                    tda[tdac:tdac+conbo] = copied_bytes
+                    copied_bytes = tda[tdac - num : tdac - num + conbo]
+                    tda[tdac : tdac + conbo] = copied_bytes
                     tdac += conbo
             else:
-                copied_bytes = tda[tdac-index:tdac-index+conbo]
-                tda[tdac:tdac+conbo] = copied_bytes
+                copied_bytes = tda[tdac - index : tdac - index + conbo]
+                tda[tdac : tdac + conbo] = copied_bytes
                 tdac += conbo
 
         return (tda, destsize)
 
-    def directoryDecode(self, nameP, dirP, fileP, head: DARC_HEAD, _dir: DARC_DIRECTORY, arcP, key) -> None:
+    def directoryDecode(
+        self, nameP, dirP, fileP, head: DARC_HEAD, _dir: DARC_DIRECTORY, arcP, key
+    ) -> None:
         old_directory = self.directory
-        
-        if _dir.directoryAddress != 0xffffffff and _dir.parentDirectoryAddress != 0xffffffff:
-            dirFile = DARC_FILEHEAD(fileP[_dir.directoryAddress:])
-            pName = self.getOriginalFileName(nameP[dirFile.nameAddress:])
+
+        if (
+            _dir.directoryAddress != 0xFFFFFFFF
+            and _dir.parentDirectoryAddress != 0xFFFFFFFF
+        ):
+            dirFile = DARC_FILEHEAD(fileP[_dir.directoryAddress :])
+            pName = self.getOriginalFileName(nameP[dirFile.nameAddress :])
             self.directory = self.directory / pName
             self.directory.mkdir(parents=True, exist_ok=True)
-        
-        fileHeadSize = len( DARC_FILEHEAD(version=head.version) )
-        file = DARC_FILEHEAD(fileP[_dir.fileHeadAddress:])
+
+        fileHeadSize = len(DARC_FILEHEAD(version=head.version))
+        file = DARC_FILEHEAD(fileP[_dir.fileHeadAddress :])
         last_index = _dir.fileHeadAddress
         for i in range(_dir.fileHeadNum):
             if file.attributes & FILE_ATTRIBUTE_DIRECTORY:
                 # ディレクトリの場合は再帰をかける
-                self.directoryDecode( nameP, dirP, fileP, head, DARC_DIRECTORY(dirP[file.dataAddress:]), arcP, key)
+                self.directoryDecode(
+                    nameP,
+                    dirP,
+                    fileP,
+                    head,
+                    DARC_DIRECTORY(dirP[file.dataAddress :]),
+                    arcP,
+                    key,
+                )
                 if self.only_game_dat:
                     if "BasicData" not in str(self.directory):
                         last_index += fileHeadSize
@@ -401,40 +447,48 @@ class DXArchive():
                     return -1
 
                 # ファイルを開く
-                pName = self.getOriginalFileName(nameP[file.nameAddress:])
+                pName = self.getOriginalFileName(nameP[file.nameAddress :])
                 if self.only_game_dat:
                     if str(pName) != "Game.dat":
                         last_index += fileHeadSize
                         file = DARC_FILEHEAD(fileP[last_index:])
                         continue
-                
+
                 if not self.directory.exists():
                     self.directory.mkdir(parents=True)
                 destP = open(self.directory / pName, mode="wb")
-                
+
                 # データがある場合のみ転送
                 if file.dataSize != 0:
                     # 初期位置をセットする
                     if arcP.tell() != head.dataStartAddress + file.dataAddress:
                         arcP.seek(head.dataStartAddress + file.dataAddress, SEEK_SET)
-                    
-                    if head.version >= 2 and file.pressDataSize != 0xffffffff:
+
+                    if head.version >= 2 and file.pressDataSize != 0xFFFFFFFF:
                         # 圧縮データが収まるメモリ領域の確保
                         temp = bytearray([0] * (file.pressDataSize + file.dataSize))
 
                         if head.version >= 5:
-                            read = self.keyConvFileRead( temp, file.pressDataSize, arcP, key, file.dataSize )
+                            read = self.keyConvFileRead(
+                                temp, file.pressDataSize, arcP, key, file.dataSize
+                            )
                         else:
-                            read = self.keyConvFileRead( temp, file.pressDataSize, arcP, key )
-                    
-                        temp[:len(read)] = read
-                        
+                            read = self.keyConvFileRead(
+                                temp, file.pressDataSize, arcP, key
+                            )
+
+                        temp[: len(read)] = read
+
                         # 解凍
-                        (decoded, _) = self.decode(temp, temp[file.pressDataSize:])
-                        temp[file.pressDataSize:] = decoded
-                    
+                        (decoded, _) = self.decode(temp, temp[file.pressDataSize :])
+                        temp[file.pressDataSize :] = decoded
+
                         # 書き出し
-                        destP.write(temp[file.pressDataSize:file.pressDataSize + file.dataSize])
+                        destP.write(
+                            temp[
+                                file.pressDataSize : file.pressDataSize + file.dataSize
+                            ]
+                        )
                     else:
                         # 転送処理開始
                         writeSize = 0
@@ -445,20 +499,26 @@ class DXArchive():
                                 moveSize = file.dataSize - writeSize
 
                             if head.version >= 5:
-                                read = self.keyConvFileRead( buffer, moveSize, arcP, key, file.dataSize + writeSize )
+                                read = self.keyConvFileRead(
+                                    buffer,
+                                    moveSize,
+                                    arcP,
+                                    key,
+                                    file.dataSize + writeSize,
+                                )
                             else:
-                                read = self.keyConvFileRead( buffer, moveSize, arcP, key )
-                            
-                            buffer[:len(read)] = read
+                                read = self.keyConvFileRead(buffer, moveSize, arcP, key)
+
+                            buffer[: len(read)] = read
 
                             # 書き出し
                             destP.write(buffer[:moveSize])
-                            
+
                             writeSize += moveSize
-                
+
                 # ファイルを閉じる
                 destP.close()
-                
+
                 """
                 # This is on the original .cpp file so I copied it too but I'm pretty sure the dates are wrongly parsed
                 # ファイルのタイムスタンプを設定する
@@ -484,8 +544,8 @@ class DXArchive():
                 # ファイル属性を付ける
                 win32file.SetFileAttributesW(str(self.directory / pName), file.attributes)
                 """
-            
-            if i == _dir.fileHeadNum-1:
+
+            if i == _dir.fileHeadNum - 1:
                 break
             else:
                 last_index += fileHeadSize
@@ -493,20 +553,20 @@ class DXArchive():
                 if self.only_game_dat:
                     return
         self.directory = old_directory
-    
+
     def getOriginalFileName(self, fileNameTable) -> Path:
         filename_start_pos = fileNameTable[0] * 4 + 4
         null_pos = fileNameTable[filename_start_pos:].find(0x0)
-        pName = fileNameTable[filename_start_pos:filename_start_pos+null_pos]
+        pName = fileNameTable[filename_start_pos : filename_start_pos + null_pos]
         try:
             return Path(pName.decode("utf8"))
         except UnicodeDecodeError:
             return Path(pName.decode("cp932"))
-       
+
 
 def main() -> None:
     decompiler = DXArchive()
-    
+
     # Ver5
     archivePath_v5 = Path("./test_wolf/version_110.wolf")
     archivePath_v5 = Path("./test_wolf/version_120.wolf")
@@ -515,25 +575,33 @@ def main() -> None:
     archivePath_v5 = Path("./test_wolf/version_200.wolf")
     archivePath_v5 = Path("./test_wolf/version_201.wolf")
     archivePath_v5 = Path("./test_wolf/version_202.wolf")
-    key_1_01_2_02 = bytearray([0x0f, 0x53, 0xe1, 0x3e, 0x04, 0x37, 0x12, 0x17, 0x60, 0x0f, 0x53, 0xe1])
-    
+    key_1_01_2_02 = bytearray(
+        [0x0F, 0x53, 0xE1, 0x3E, 0x04, 0x37, 0x12, 0x17, 0x60, 0x0F, 0x53, 0xE1]
+    )
+
     archivePath_v5 = Path("./test_wolf/version_210.wolf")
-    key_2_10 = bytearray([0x4c, 0xd9, 0x2a, 0xb7, 0x28, 0x9b, 0xac, 0x07, 0x3e, 0x77, 0xec, 0x4c])
-    
+    key_2_10 = bytearray(
+        [0x4C, 0xD9, 0x2A, 0xB7, 0x28, 0x9B, 0xAC, 0x07, 0x3E, 0x77, 0xEC, 0x4C]
+    )
+
     # Setup
     archivePath = archivePath_v5
     keyString_ = key_2_10
     outputPath = Path("output")
     only_game_dat = True
-    
-    
-    decompiled = decompiler.decodeArchive( archivePath=archivePath, outputPath=outputPath , only_game_dat=only_game_dat, keyString_=keyString_ )
-    
+
+    decompiled = decompiler.decodeArchive(
+        archivePath=archivePath,
+        outputPath=outputPath,
+        only_game_dat=only_game_dat,
+        keyString_=keyString_,
+    )
+
     if decompiled:
         print(f"Decompiled {archivePath.name}")
     else:
         print(f"Couldn't decompile {archivePath.name}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
